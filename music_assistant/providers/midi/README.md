@@ -2,7 +2,8 @@
 
 MidiProvider exposes bundled Standard MIDI File samples and an optional custom
 file as playable MA tracks. The included **The Planets, Op. 32 — Gustav Holst**
-is always available in Browse and Search, including searches by composer.
+and **Bridgerton Main Theme — Kris Bowers & Michael Dean Parsons** are always
+available in Browse and Search, including searches by composer.
 Only the configured custom performance participates in automatic library track
 sync; samples remain available in the browser without filling the library.
 

@@ -13,20 +13,46 @@ from music_assistant.providers.midi.session import SessionClosedError
 from tests.providers.midi.test_provider import make_provider
 
 
-async def test_bundled_sample_without_custom_file(midi_path: Path, soundfont: str) -> None:
+@pytest.mark.parametrize(
+    ("item_id", "title", "artist", "duration", "query"),
+    [
+        ("sample_holst_planets", "The Planets, Op. 32", "Gustav Holst", 2743, "holst"),
+        (
+            "sample_BRIDGERTON_MAIN_THEME",
+            "Bridgerton Main Theme",
+            "Kris Bowers & Michael Dean Parsons",
+            48,
+            "parsons",
+        ),
+    ],
+)
+async def test_bundled_sample_without_custom_file(
+    midi_path: Path,
+    soundfont: str,
+    item_id: str,
+    title: str,
+    artist: str,
+    duration: int,
+    query: str,
+) -> None:
     """Default setup exposes the shipped score and can produce real PCM immediately."""
     provider = make_provider(midi_path, soundfont)
     provider.config.setup_data.pop(CONF_MIDI_FILE)
     await provider.handle_async_init()
     try:
         tracks = list(await provider.browse("midi-test://"))
-        assert len(tracks) == 1
-        track = await provider.get_track("sample_holst_planets")
-        assert tracks == [track]
-        assert track.name == "The Planets, Op. 32"
-        assert track.artists[0].name == "Gustav Holst"
-        assert track.duration == 2743
-        assert (await provider.search("holst", [MediaType.TRACK])).tracks == [track]
+        assert {track.item_id for track in tracks} == {
+            "sample_holst_planets",
+            "sample_BRIDGERTON_MAIN_THEME",
+        }
+        track = await provider.get_track(item_id)
+        assert track in tracks
+        assert track.name == title
+        assert "\x00" not in track.name
+        assert track.artists[0].name == artist
+        assert track.duration == duration
+        assert (await provider.search(query, [MediaType.TRACK])).tracks == [track]
+        assert (await provider.search(title, [MediaType.TRACK])).tracks == [track]
         assert [item async for item in provider.get_library_tracks()] == []
         details = await provider.get_stream_details(track.item_id)
         source = provider.get_audio_stream(details)

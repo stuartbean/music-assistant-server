@@ -13,6 +13,14 @@ from .synthesizer import FluidSynth
 TRACK_ID = "performance"
 ARTIST_ID = "midi"
 SAMPLES_DIR = Path(__file__).with_name("samples")
+SAMPLE_METADATA = {
+    "holst_planets": ("The Planets, Op. 32", "gustav_holst", "Gustav Holst"),
+    "BRIDGERTON_MAIN_THEME": (
+        "Bridgerton Main Theme",
+        "kris_bowers_michael_dean_parsons",
+        "Kris Bowers & Michael Dean Parsons",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -41,12 +49,10 @@ def load_catalog(custom_path: str, soundfont: str) -> dict[str, MidiCatalogItem]
     for path in sorted(SAMPLES_DIR.glob("*.mid")):
         item_id = f"sample_{path.stem}"
         midi = _load_file(path)
-        if path.stem == "holst_planets":
+        if metadata := SAMPLE_METADATA.get(path.stem):
+            title, artist_id, artist_name = metadata
             catalog[item_id] = MidiCatalogItem(
-                item_id,
-                replace(midi, name="The Planets, Op. 32"),
-                "gustav_holst",
-                "Gustav Holst",
+                item_id, replace(midi, name=title), artist_id, artist_name
             )
         else:
             catalog[item_id] = MidiCatalogItem(item_id, midi)
