@@ -1,0 +1,12 @@
+{
+  "type": "music",
+  "domain": "midi",
+  "stage": "experimental",
+  "name": "MidiProvider",
+  "description": "Synthesize a local General MIDI file for stereo and instrument-family playback.",
+  "codeowners": ["@music-assistant"],
+  "requirements": ["mido==1.3.3"],
+  "multi_instance": true,
+  "self_service": false,
+  "icon": "piano"
+}

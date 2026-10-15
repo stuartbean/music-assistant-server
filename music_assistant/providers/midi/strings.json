@@ -1,0 +1,19 @@
+{
+  "manifest": {
+    "name": "MidiProvider",
+    "description": "Synthesize a local General MIDI file for stereo and instrument-family playback."
+  },
+  "config_entries": {
+    "midi_file": {
+      "label": "MIDI file",
+      "description": "Absolute path to a Type 0 or Type 1 MIDI file on the server."
+    },
+    "soundfont": {
+      "label": "Custom General MIDI SoundFont",
+      "description": "Optional absolute path to a GM-compatible .sf2 file on the server. Leave empty to use the included TimGM6mb instruments."
+    }
+  },
+  "setup_flow": {
+    "user": {"title": "Choose a MIDI file"}
+  }
+}

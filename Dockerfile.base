@@ -216,6 +216,9 @@ RUN set -x \
         libsndfile1 \
         # libchromaprint needed for AcoustID fingerprinting (acoustid_lookup)
         libchromaprint1 \
+        # MIDI synthesis and its default General MIDI instrument bank
+        libfluidsynth3 \
+        timgm6mb-soundfont \
         # Audio codec runtime libraries (needed for FFmpeg)
         libfdk-aac2 \
         libmp3lame0 \
@@ -264,6 +267,9 @@ RUN set -x \
         /usr/bin/pacat \
         /usr/bin/pasuspender \
         /usr/bin/pacmd
+
+# Fail the image build if MIDI's native runtime or default instrument bank is missing.
+RUN python -c "import ctypes; from ctypes.util import find_library; from pathlib import Path; library = find_library('fluidsynth'); assert library; ctypes.CDLL(library); assert Path('/usr/share/sounds/sf2/TimGM6mb.sf2').stat().st_size > 0"
 
 # Install Snapcast 0.34.0 from GitHub releases (requires at least 0.27)
 # The pinned SHA256s per arch are verified before install; bump them when changing the version.
