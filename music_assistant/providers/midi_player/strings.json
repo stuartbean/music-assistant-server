@@ -1,0 +1,16 @@
+{
+  "manifest": {
+    "name": "MidiPlayer",
+    "description": "Route MIDI instrument families to synchronized AirPlay speakers."
+  },
+  "config_entries": {
+    "woodwind": {"label": "Woodwind", "description": "Optional AirPlay receiver for this family's stereo pair."},
+    "brass": {"label": "Brass", "description": "Optional AirPlay receiver for this family's stereo pair."},
+    "strings": {"label": "Strings", "description": "Optional AirPlay receiver for this family's stereo pair."},
+    "harp": {"label": "Harp", "description": "Optional AirPlay receiver for this family's stereo pair."},
+    "percussion": {"label": "Percussion", "description": "Optional AirPlay receiver for this family's stereo pair."},
+    "organ": {"label": "Organ", "description": "Optional AirPlay receiver for this family's stereo pair."},
+    "voices": {"label": "Voices", "description": "Optional AirPlay receiver for this family's stereo pair."}
+  },
+  "setup_flow": {"user": {"title": "Assign instrument families to AirPlay players"}}
+}

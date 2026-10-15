@@ -774,6 +774,7 @@ async def test_a_repeated_prepare_hands_back_the_preparation_already_running(
 ) -> None:
     """The second call for the same item returns the running preparation, uncancelled."""
     controller, _next_item, _mass = _controller_with_next_item()
+    mass_minimal.players = MagicMock()
     controller.mass = mass_minimal
     resolving = asyncio.Event()
 

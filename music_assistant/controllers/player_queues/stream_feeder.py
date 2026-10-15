@@ -56,6 +56,10 @@ class StreamFeederMixin(_PlayerQueuesBase):
         :param queue_item_id: The item whose audio is being streamed or has fully arrived.
         :return: The preparation of the next item's audio, or None when nothing needs preparing.
         """
+        if (queue_player := self.mass.players.get_player(queue_id)) and not (
+            queue_player.uses_audio_buffer
+        ):
+            return None
         next_item = self.get_next_item(queue_id, queue_item_id)
         if next_item is None or next_item.queue_item_id == queue_item_id:
             return None

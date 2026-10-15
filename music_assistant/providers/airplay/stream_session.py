@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncGenerator, Coroutine
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import aclosing, suppress
 from typing import TYPE_CHECKING, Any
 
@@ -68,6 +68,8 @@ class AirPlayStreamSession:
         sync_clients: list[AirPlayPlayer],
         pcm_format: AudioFormat,
         media: PlayerMedia,
+        *,
+        member_audio: Callable[[str, bytes], bytes] | None = None,
     ) -> None:
         """
         Initialize AirPlayStreamSession.
@@ -76,12 +78,14 @@ class AirPlayStreamSession:
         :param sync_clients: List of AirPlay players to stream to.
         :param pcm_format: PCM format of the input stream.
         :param media: Queue media that owns the stream session.
+        :param member_audio: Optional same-format, same-frame-count PCM mapping per receiver.
         """
         assert sync_clients
         self.prov = airplay_provider
         self.mass = airplay_provider.mass
         self.pcm_format = pcm_format
         self.media = media
+        self._member_audio = member_audio
         self.sync_clients = sync_clients
         self._audio_source_task: asyncio.Task[None] | None = None
         self._player_ffmpeg: dict[str, FFMpeg] = {}
@@ -256,7 +260,13 @@ class AirPlayStreamSession:
             for p in self.sync_clients
         )
 
-    async def replace(self, audio_source: AsyncGenerator[bytes], media: PlayerMedia) -> bool:
+    async def replace(
+        self,
+        audio_source: AsyncGenerator[bytes],
+        media: PlayerMedia,
+        *,
+        member_audio: Callable[[str, bytes], bytes] | None = None,
+    ) -> bool:
         """
         Warm-replace the playing media with a new source (seek/next-track).
 
@@ -278,6 +288,7 @@ class AirPlayStreamSession:
                 self._audio_source_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await self._audio_source_task
+            self._member_audio = member_audio
             for player in self.sync_clients:
                 if ffmpeg := self._player_ffmpeg.pop(player.player_id, None):
                     await ffmpeg.kill()
@@ -438,6 +449,8 @@ class AirPlayStreamSession:
         lock so ``seconds_streamed``, the ring buffer and the per-client skip
         counter stay consistent with the live feed.
         """
+        if self._member_audio is not None:
+            raise PlayerCommandFailed("Per-receiver audio sessions require fixed membership")
         await self._resolve_late_joiner_ptp(airplay_player)
         async with self._lock:
             if not self._session_is_live():
@@ -999,6 +1012,11 @@ class AirPlayStreamSession:
                 return
             chunk = chunk[skip:]
             self._client_skip_bytes[player_id] = 0
+        if self._member_audio is not None:
+            routed = self._member_audio(player_id, chunk)
+            if len(routed) != len(chunk):
+                raise PlayerCommandFailed("Per-receiver PCM must preserve the frame count")
+            chunk = routed
         if ffmpeg := self._player_ffmpeg.get(player_id):
             if ffmpeg.closed:
                 return

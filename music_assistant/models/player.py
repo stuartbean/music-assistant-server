@@ -551,6 +551,11 @@ class Player(ABC):
         return self._attr_playback_state
 
     @property
+    def uses_audio_buffer(self) -> bool:
+        """Return whether queue preparation should buffer this player's source audio."""
+        return True
+
+    @property
     def requires_flow_mode(self) -> bool:
         """Return if the player needs flow mode for (queue) playback."""
         # Default implementation: True if the player does not support PlayerFeature.ENQUEUE
@@ -1740,6 +1745,8 @@ class Player(ABC):
 
         Will use 'requires_flow_mode' unless overridden by flow_mode config.
         """
+        if not self.uses_audio_buffer:
+            return False
         # Check config override
         if bool(self._config.get_value(CONF_FLOW_MODE)) is True:
             # flow mode explicitly enabled in config

@@ -1,0 +1,13 @@
+{
+  "type": "player",
+  "domain": "midi_player",
+  "stage": "experimental",
+  "name": "MidiPlayer",
+  "description": "Route MIDI instrument families to synchronized AirPlay speakers.",
+  "codeowners": ["@music-assistant"],
+  "requirements": ["mido==1.3.3"],
+  "depends_on": "airplay",
+  "multi_instance": true,
+  "self_service": false,
+  "icon": "piano"
+}

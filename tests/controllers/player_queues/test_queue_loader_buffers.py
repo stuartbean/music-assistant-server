@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from music_assistant_models.enums import ContentType, MediaType, StreamType
 from music_assistant_models.media_items import AudioFormat
 from music_assistant_models.queue_item import QueueItem
@@ -211,3 +212,27 @@ async def test_releasing_a_failed_item_leaves_finished_and_unlimited_sources_alo
         assert item.streamdetails is not None
         assert item.streamdetails.buffer is not None
         assert item.streamdetails.buffer.clear.await_count == 0
+
+
+@pytest.mark.parametrize("uses_buffer", [True, False])
+async def test_start_prepares_buffer_only_when_player_uses_it(uses_buffer: bool) -> None:
+    """Direct-source players attach before consuming audio instead of stereo prebuffering."""
+    target = _item(QUEUE_ID, "target", UNLIMITED)
+    ctrl = _controller((QUEUE_ID, [target]))
+    mass = cast("MagicMock", ctrl.mass)
+    mass.players.get_player.return_value = MagicMock(uses_audio_buffer=uses_buffer)
+    mass.streams.audio.get_stream_details = AsyncMock(return_value=target.streamdetails)
+    mass.streams.audio.get_audio_buffer = AsyncMock()
+    await ctrl._load_item(target, is_start=True)
+    assert mass.streams.audio.get_audio_buffer.await_count == int(uses_buffer)
+
+
+async def test_direct_source_player_does_not_prebuffer_next_track() -> None:
+    """A background stereo prefetch cannot consume the next MIDI session's family frames."""
+    first = _item(QUEUE_ID, "first", UNLIMITED)
+    second = _item(QUEUE_ID, "second", UNLIMITED)
+    ctrl = _controller((QUEUE_ID, [first, second]))
+    cast("MagicMock", ctrl.mass).players.get_player.return_value = MagicMock(
+        uses_audio_buffer=False
+    )
+    assert ctrl.prepare_next_audio_buffer(QUEUE_ID, first.queue_item_id) is None

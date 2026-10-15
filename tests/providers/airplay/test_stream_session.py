@@ -2355,3 +2355,35 @@ async def test_start_client_displaces_a_stopping_stream_under_the_spawn_lock() -
     assert steps == ["stop", "connect", "ffmpeg"]
     assert player.stream is new_stream
     assert new_stream.session is session
+
+
+async def test_member_audio_callback_preserves_shared_timeline() -> None:
+    """Receiver-specific PCM uses the same fan-out counter and frame interval."""
+    session = _make_session(0, 0)
+    second = _make_late_joiner()
+    second.stream = _stream_defaults(MagicMock(running=True))
+    session.sync_clients.append(second)
+    reference = b"\x00" * 400
+    session._member_audio = lambda player_id, _chunk: (
+        (b"\x01" if player_id == "leader" else b"\x02") * 400
+    )
+    first_ffmpeg = MagicMock(closed=False)
+    first_ffmpeg.write = AsyncMock()
+    second_ffmpeg = MagicMock(closed=False)
+    second_ffmpeg.write = AsyncMock()
+    session._player_ffmpeg = {"leader": first_ffmpeg, "late_joiner": second_ffmpeg}
+    assert await session._write_chunk_to_all_players(reference)
+    first_ffmpeg.write.assert_awaited_once_with(b"\x01" * 400)
+    second_ffmpeg.write.assert_awaited_once_with(b"\x02" * 400)
+    assert session._pcm_total_fed == len(reference)
+    assert session.seconds_streamed == len(reference) / session._pcm_byte_rate
+    with pytest.raises(PlayerCommandFailed, match="fixed membership"):
+        await session.add_client(_make_late_joiner())
+
+
+async def test_member_audio_cannot_change_frame_count() -> None:
+    """An invalid route cannot desynchronize the receiver by dropping samples."""
+    session = _make_session(0, 0)
+    session._member_audio = lambda _player, _chunk: b""
+    with pytest.raises(PlayerCommandFailed, match="frame count"):
+        await session._write_chunk_to_player(session.sync_clients[0], b"\x00" * 400)

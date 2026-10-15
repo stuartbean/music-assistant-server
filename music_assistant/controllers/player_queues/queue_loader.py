@@ -414,7 +414,12 @@ class QueueLoaderMixin(_PlayerQueuesBase):
         # immediate playback start. For preloaded next tracks we skip this and
         # initialize the buffer when the stream of the track before it nears its end.
         # AudioSource items are realtime/live and bypass the AudioBuffer.
-        if is_start and queue_item.streamdetails.media_type != MediaType.AUDIO_SOURCE:
+        queue_player = self.mass.players.get_player(queue_id)
+        if (
+            is_start
+            and queue_item.streamdetails.media_type != MediaType.AUDIO_SOURCE
+            and (queue_player is None or queue_player.uses_audio_buffer)
+        ):
             await self.mass.streams.audio.get_audio_buffer(
                 queue_item,
                 seek_position_ms=int(seek_position * 1000),
