@@ -1785,6 +1785,21 @@ class StreamsAudio:
         if streamdetails.fade_in:
             filter_params.insert(0, "afade=type=in:start_time=0:duration=3")
 
+        queue_data = (
+            self.mass.player_queues.queue_data_or_none(streamdetails.queue_id)
+            if streamdetails.queue_id
+            else None
+        )
+        seek_fade = bool(
+            queue_data
+            and queue_data.seek_transition
+            == (session_id or queue_data.session_id, queue_item.queue_item_id)
+        )
+        if seek_fade and not streamdetails.fade_in:
+            # Apply after normalization/speed and after selecting the buffer offset,
+            # so cached seeks also ramp for 20 ms of actual playback time.
+            filter_params.append("afade=type=in:start_time=0:duration=0.02:curve=hsin")
+
         logger.log(
             VERBOSE_LOG_LEVEL,
             "Starting queue item stream for %s (%s)"
@@ -1811,7 +1826,7 @@ class StreamsAudio:
                 pcm_format=pcm_format,
                 normalization=get_normalization_details(streamdetails, gain_correct),
                 playback_speed=playback_speed,
-                alters_audio=streamdetails.fade_in,
+                alters_audio=streamdetails.fade_in or seek_fade,
             )
         # read from buffer with filters applied (volume normalization, speed, fade-in, etc.)
         # if no processing needed, this yields directly from the buffer

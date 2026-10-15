@@ -20,9 +20,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from music_assistant_models.enums import ContentType, MediaType, VolumeNormalizationMode
 from music_assistant_models.media_items import AudioFormat
+from music_assistant_models.player_queue import PlayerQueue
 from music_assistant_models.streamdetails import StreamDetails
 
 import music_assistant.controllers.streams.audio as audio_mod
+from music_assistant.controllers.player_queues.state import PlayerQueueData
 from music_assistant.controllers.streams.audio import StreamsAudio
 
 PCM_FORMAT = AudioFormat(
@@ -158,3 +160,85 @@ async def test_no_override_reevaluates_to_measurement_only(
     cast(
         "MagicMock", controller.mass
     ).streams.audio_analysis.get_audio_analysis.assert_called_once()
+
+
+SEEK_FADE = "afade=type=in:start_time=0:duration=0.02:curve=hsin"
+
+
+@pytest.mark.parametrize("cached", [False, True])
+@pytest.mark.parametrize("position", [0, 120])
+async def test_seek_fades_cached_and_fresh_audio(
+    audio: tuple[StreamsAudio, dict[str, list[str]]],
+    monkeypatch: pytest.MonkeyPatch,
+    cached: bool,
+    position: int,
+) -> None:
+    """Every explicit seek, including zero, fades after normalization and speed conversion."""
+    controller, captured = audio
+    item = _make_queue_item()
+    item.queue_id = "queue_1"
+    item.queue_item_id = "item_1"
+    buffer = MagicMock()
+    buffer.pcm_format = PCM_FORMAT
+    original = await controller.get_audio_buffer(item)
+    assert original is not None
+    buffer.get_stream = original.get_stream
+    buffer.is_valid.return_value = True
+    item.streamdetails.buffer = buffer
+    get_buffer = AsyncMock(return_value=buffer)
+    monkeypatch.setattr(controller, "get_audio_buffer", get_buffer)
+    state = PlayerQueueData(
+        PlayerQueue(queue_id="queue_1", active=True, display_name="Test", available=True, items=1)
+    )
+    state.session_id = "seek_1"
+    state.seek_transition = ("seek_1", "item_1")
+    mass = cast("MagicMock", controller.mass)
+    mass.player_queues.queue_data_or_none.return_value = state
+
+    await _drain(
+        controller.get_queue_item_stream(
+            item,
+            PCM_FORMAT,
+            seek_position=position,
+            playback_speed=2.0,
+            session_id="seek_1",
+            prepared_buffer=buffer if cached else None,
+        )
+    )
+    assert captured["filter_params"][-1] == SEEK_FADE
+    assert captured["filter_params"].index("atempo=2.0") < captured["filter_params"].index(
+        SEEK_FADE
+    )
+    assert get_buffer.await_count == (0 if cached else 1)
+    assert mass.streams.audio_processing.update_item_runtime.call_args.kwargs["alters_audio"]
+
+
+@pytest.mark.parametrize(
+    ("transition", "generation", "long_fade"),
+    [
+        (None, "seek_1", False),
+        (("seek_1", "item_1"), "older_generation", False),
+        (("seek_1", "other_item"), "seek_1", False),
+        (("seek_1", "item_1"), "seek_1", True),
+    ],
+)
+async def test_seek_fade_does_not_leak_or_replace_existing_resume_fade(
+    audio: tuple[StreamsAudio, dict[str, list[str]]],
+    transition: tuple[str, str] | None,
+    generation: str,
+    long_fade: bool,
+) -> None:
+    """Ordinary starts, old requests and other items never receive the seek fade."""
+    controller, captured = audio
+    item = _make_queue_item()
+    item.queue_item_id = "item_1"
+    item.streamdetails.fade_in = long_fade
+    state = PlayerQueueData(
+        PlayerQueue(queue_id="queue_1", active=True, display_name="Test", available=True, items=1)
+    )
+    state.session_id = "seek_1"
+    state.seek_transition = transition
+    cast("MagicMock", controller.mass).player_queues.queue_data_or_none.return_value = state
+    await _drain(controller.get_queue_item_stream(item, PCM_FORMAT, session_id=generation))
+    assert SEEK_FADE not in captured["filter_params"]
+    assert ("afade=type=in:start_time=0:duration=3" in captured["filter_params"]) == long_fade

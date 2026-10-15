@@ -40,6 +40,10 @@ class FakeRenderer:
         self.thread = threading.get_ident()
         self.instances.append(self)
 
+    def prepare_seek(self, _first_frame: int) -> int:
+        """Keep the synthetic renderer's cheap replay origin at zero."""
+        return 0
+
     def render(self, frames: int) -> NDArray[np.float32]:
         """Emit sample-addressable PCM independent of caller chunking."""
         assert self.thread == threading.get_ident()

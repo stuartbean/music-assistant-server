@@ -242,8 +242,7 @@ class MidiSession:
         self.state = "rendering"
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="midi-render")
         try:
-            await self._run(self._create_renderer)
-            frame = 0
+            frame = await self._run(self._create_renderer)
             while frame < self.first_frame and self.is_rendering():
                 count = min(BLOCK_FRAMES, self.first_frame - frame)
                 await self._run(partial(self._render, count))
@@ -287,8 +286,9 @@ class MidiSession:
             asyncio.get_running_loop().run_in_executor(self._executor, function)
         )
 
-    def _create_renderer(self) -> None:
+    def _create_renderer(self) -> int:
         self._renderer = MidiRenderer(self._midi, self._soundfont)
+        return self._renderer.prepare_seek(self.first_frame)
 
     def _render(self, frames: int) -> tuple[bytes, bytes]:
         assert self._renderer is not None

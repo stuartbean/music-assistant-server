@@ -211,9 +211,9 @@ class MidiProvider(MusicProvider):
         request = streamdetails.data
         if not isinstance(request, MidiPlaybackRequest) or request.item_id != streamdetails.item_id:
             raise AudioError("Missing MIDI playback association")
-        if request.session and request.session.state in ("eof", "closed", "failed"):
-            # MA can reopen details after pause/seek. Every render has a new ID,
-            # while existing consumers keep their original terminal session.
+        if request.session and request.session.state != "pending":
+            # MA can start a seek replacement before the old buffer has closed its
+            # generator. Each invocation needs its own renderer and file origin.
             streamdetails.data = MidiPlaybackRequest(uuid4().hex, streamdetails.item_id)
         session = self.get_playback_session(streamdetails)
         session.set_source_origin(min(seek_position * SAMPLE_RATE, midi.total_frames))

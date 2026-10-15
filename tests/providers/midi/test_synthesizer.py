@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from music_assistant.providers.midi.constants import MIX_GAIN, PCM_CHANNELS, SAMPLE_RATE
-from music_assistant.providers.midi.midi_file import MidiEvent, load_midi
+from music_assistant.providers.midi.midi_file import MidiEvent, MidiFile, load_midi
 from music_assistant.providers.midi.routing import FAMILIES, InstrumentFamily, MidiRoute
 from music_assistant.providers.midi.session import MidiSession
 from music_assistant.providers.midi.synthesizer import FluidSynth, MidiRenderer, mix_stereo
@@ -127,3 +127,50 @@ def test_mix_has_fixed_headroom_and_no_timeline_delay() -> None:
     np.testing.assert_array_equal(result, np.full((7, 2), len(FAMILIES) * MIX_GAIN))
     pcm *= 10
     np.testing.assert_array_equal(np.frombuffer(mix_stereo(pcm), dtype="<f4"), np.ones(14))
+
+
+def test_fast_seek_restores_original_family_and_sustain(soundfont: str) -> None:
+    """Long seeks retain sustained notes in their original lane across program changes."""
+    events = (
+        MidiEvent(0, "program_change", 0, 40),
+        MidiEvent(0, "control_change", 0, 64, 127),
+        MidiEvent(0, "note_on", 0, 60, 100),
+        MidiEvent(SAMPLE_RATE, "note_off", 0, 60),
+        MidiEvent(2 * SAMPLE_RATE, "program_change", 0, 56),
+        MidiEvent(2 * SAMPLE_RATE, "note_on", 0, 64, 100),
+        MidiEvent(21 * SAMPLE_RATE, "control_change", 0, 120, 0),
+    )
+    midi = MidiFile("Held notes", events, 25 * SAMPLE_RATE, 27 * SAMPLE_RATE)
+    renderer = MidiRenderer(midi, soundfont)
+    try:
+        assert renderer.prepare_seek(20 * SAMPLE_RATE) == 18 * SAMPLE_RATE
+        renderer.render(2 * SAMPLE_RATE)
+        pcm = renderer.render(4096)
+        assert np.max(np.abs(pcm[:, 2:4])) > 0.001
+        assert np.max(np.abs(pcm[:, 4:6])) > 0.001
+        assert np.count_nonzero(pcm[:, :2]) == 0
+        renderer.render(2 * SAMPLE_RATE)
+        assert np.max(np.abs(renderer.render(4096))) < 1e-6
+    finally:
+        renderer.close()
+
+
+def test_fast_seek_omits_ended_notes_and_keeps_ports_independent(soundfont: str) -> None:
+    """An old released note stays silent while the same channel on another port is restored."""
+    events = (
+        MidiEvent(0, "program_change", 0, 40),
+        MidiEvent(0, "note_on", 0, 60, 100),
+        MidiEvent(0, "program_change", 0, 56, port=1),
+        MidiEvent(0, "note_on", 0, 64, 100, port=1),
+        MidiEvent(SAMPLE_RATE, "note_off", 0, 60),
+    )
+    midi = MidiFile("Ports", events, 25 * SAMPLE_RATE, 27 * SAMPLE_RATE)
+    renderer = MidiRenderer(midi, soundfont)
+    try:
+        renderer.prepare_seek(20 * SAMPLE_RATE)
+        renderer.render(2 * SAMPLE_RATE)
+        pcm = renderer.render(4096)
+        assert np.max(np.abs(pcm[:, 2:4])) > 0.001
+        assert np.count_nonzero(pcm[:, 4:6]) == 0
+    finally:
+        renderer.close()

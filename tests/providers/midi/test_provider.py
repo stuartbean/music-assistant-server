@@ -109,7 +109,7 @@ async def test_reopened_generator_gets_new_session_id(
     source = provider.get_audio_stream(details)
     await anext(source)
     await source.aclose()
-    assert original.state == "closed"
+    assert str(original.state) == "closed"
     replacement = provider.get_audio_stream(details)
     await anext(replacement)
     current = provider.get_playback_session(details)
@@ -152,3 +152,41 @@ async def test_buffer_source_origin_can_precede_queue_seek(
     assert block.start_frame == 0
     await source.aclose()
     await provider.unload()
+
+
+@pytest.mark.parametrize("seek_position", [0, 1, 3])
+async def test_seek_can_start_before_previous_generator_closes(
+    midi_path: Path, monkeypatch: pytest.MonkeyPatch, seek_position: int
+) -> None:
+    """Overlapping buffer restarts own independent renders even when details are reused."""
+    monkeypatch.setattr("music_assistant.providers.midi.session.MidiRenderer", FakeRenderer)
+    provider = make_provider(midi_path)
+    details = await provider.get_stream_details("performance")
+    original = provider.get_playback_session(details)
+    old_consumer = original.attach()
+    source = provider.get_audio_stream(details)
+    replacement = provider.get_audio_stream(details, seek_position=seek_position)
+    try:
+        await anext(source)
+        assert original.state == "rendering"
+        await anext(replacement)
+        current = provider.get_playback_session(details)
+        assert current.session_id != original.session_id
+        assert current.first_frame == seek_position * 44100
+        assert current.end_frame == seek_position * 44100 + 4096
+        assert original.first_frame == 0
+        assert original.end_frame == 4096
+        assert old_consumer.session is original
+        await source.aclose()
+        assert str(original.state) == "closed"
+        assert current.session_id in provider._sessions
+        assert provider.get_playback_session(details) is current
+        assert len(await anext(replacement)) == 4096 * 8
+        assert current.end_frame == seek_position * 44100 + 8192
+        with pytest.raises(SessionClosedError):
+            await old_consumer.read()
+    finally:
+        await source.aclose()
+        await replacement.aclose()
+        await provider.unload()
+    assert not provider._sessions

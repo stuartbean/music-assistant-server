@@ -10,8 +10,16 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from music_assistant_models.errors import AudioError
 
-from .constants import BLOCK_FRAMES, MIDI_CHANNELS, MIX_GAIN, PCM_CHANNELS, SAMPLE_RATE
+from .constants import (
+    BLOCK_FRAMES,
+    MIDI_CHANNELS,
+    MIX_GAIN,
+    PCM_CHANNELS,
+    SAMPLE_RATE,
+    SEEK_PREROLL_SECONDS,
+)
 from .routing import FAMILIES, MidiRoute, build_routes, instrument_family
+from .seek import held_note_indices
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -215,6 +223,33 @@ class MidiRenderer:
         self.frame = 0
         self._event = 0
         self._released = False
+
+    def prepare_seek(self, first_frame: int) -> int:
+        """
+        Restore MIDI state before a short lead-in, returning its first file frame.
+
+        Held notes retain their original instrument and controller history, but their
+        sample phase and envelopes restart. The caller renders/discards the lead-in.
+
+        :param first_frame: Absolute first frame requested by the playback.
+        """
+        if self.frame or self._event:
+            raise RuntimeError("Seek preparation requires a fresh MIDI renderer")
+        if not 0 <= first_frame <= self._midi.total_frames:
+            raise ValueError("MIDI seek position is outside the performance")
+        origin = max(0, first_frame - SEEK_PREROLL_SECONDS * SAMPLE_RATE)
+        end = 0
+        while end < len(self._midi.events) and self._midi.events[end].frame < origin:
+            end += 1
+        held = held_note_indices(self._midi.events, end)
+        for index in range(end):
+            event = self._midi.events[index]
+            if event.kind == "note_on" and event.param2 and index not in held:
+                continue
+            self._dispatch(event)
+        self._event = end
+        self.frame = origin
+        return origin
 
     def render(self, frames: int = BLOCK_FRAMES) -> NDArray[np.float32]:
         """Return at most the requested frames, or an empty array at end-of-stream."""

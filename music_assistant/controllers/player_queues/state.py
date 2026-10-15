@@ -79,6 +79,8 @@ class PlayerQueueData:
     flow_queue_exhausted: str | None = None
     # the current stream session id (set when a stream starts, cleared between sessions)
     session_id: str | None = None
+    # playback generation and item receiving the short seek fade; never persisted
+    seek_transition: tuple[str, str] | None = None
     # per-item play log for the active flow-mode stream
     flow_mode_stream_log: list[PlayLogEntry] = field(default_factory=list)
     # queue_item_id most recently handed to the player as the next item

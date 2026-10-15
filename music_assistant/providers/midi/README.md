@@ -93,12 +93,25 @@ two-second release tail is rendered, then EOF. Longer SoundFont releases are
 truncated at that documented bound. Track duration includes the tail, rounded up
 to whole seconds for MA; `session.total_frames` is the precise length.
 
-Seeking is supported by synthesizing from frame zero and discarding the prefix
-on the same worker. This restores notes, sustain, programs, controllers and voice
-envelopes instead of replaying only the latest program numbers. Seeking far into
-a long piece can therefore take time. MA can reuse its stereo buffer for a seek,
-or refill that buffer from an earlier file position; the actual generator seek
-argument determines the render session's source origin.
+Seeking restores the MIDI state and renders/discards at most a **two-second
+lead-in** on the same worker before producing the target frames. Older events
+are scanned without synthesizing their elapsed audio. Only notes still held by
+keys, sustain or sostenuto are restarted, under their original instrument and
+ordered controller/program history. Pedal releases, all-notes-off, all-sounds-off,
+controller resets and port-scoped GM resets are accounted for. Subsequent events
+keep their original absolute file-frame positions.
+
+This is a fast musical seek, not a sample-identical reconstruction of playback
+from zero. Older held notes restart their sample phase and envelopes at the lead-in;
+old release tails are omitted. Long-decay/percussive sounds and SoundFont-specific
+voice stealing can differ briefly after a jump. There is no added silence or
+crossfade inside the provider: stereo and family buses still use the exact same
+rendered frames. MA applies a 20 ms fade-in at playback after an explicit seek,
+including seeks served from its stereo cache. This changes gain, not frame positions.
+The future multichannel player must apply the same ramp to its family outputs.
+Outgoing audio already buffered by a speaker cannot be faded reliably by the server. MA/player buffering can introduce a short pause while seeking.
+MA can reuse its stereo buffer for a seek, or refill from an earlier file position;
+the actual generator seek argument determines the render session's source origin.
 
 ## One renderer and two views
 
@@ -187,7 +200,8 @@ mismatched queue generations. For an already-resolved queue item,
 `provider.get_playback_session(queue_item.streamdetails)` obtains the same session
 without opening another generator. Distinct requests for the same track have
 independent IDs, synths and cursors. Reopening an ended/cancelled source generator
-gets a new render ID, including after pause/resume. MA can stop a paused queue
+gets a new render ID, including after pause/resume or when a seek starts before
+the previous buffer has finished closing its generator. MA can stop a paused queue
 after 30 seconds; preserving a live generator across pause is not assumed.
 
 Frame zero is the original file's musical origin. A source seek to S seconds

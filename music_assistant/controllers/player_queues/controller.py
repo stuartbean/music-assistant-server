@@ -981,7 +981,9 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
         queue.elapsed_time = position
         queue.elapsed_time_last_updated = time.time()
         self.signal_update(queue_id)
-        await self.play_index(queue_id, queue.current_index, seek_position=position)
+        await self.play_index(
+            queue_id, queue.current_index, seek_position=position, seek_transition=True
+        )
 
     @api_command("player_queues/resume", required_scope=Scope.QUEUES_CONTROL)
     @handle_play_action
@@ -1052,6 +1054,7 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
         index: int | str,
         seek_position: int = 0,
         fade_in: bool = False,
+        seek_transition: bool = False,
     ) -> None:
         """Play item at index (or item_id) X in queue."""
         self._check_player_permission(queue_id)
@@ -1102,6 +1105,11 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
             self.mass.streams.audio.clear_crossfade_handover(queue_id)
             # always update session id when we start a new playback session
             queue_data.session_id = shortuuid.random(length=8)
+            queue_data.seek_transition = (
+                (queue_data.session_id, requested_item.queue_item_id)
+                if seek_transition and (requested_item := self.get_item(queue_id, index))
+                else None
+            )
             self.mass.streams.audio_processing.start_session(
                 queue_id,
                 queue_data.session_id,

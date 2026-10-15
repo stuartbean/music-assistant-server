@@ -97,7 +97,7 @@ async def test_seek_publishes_target_before_restarting_stream() -> None:
 
     await ctrl.seek(QUEUE_ID, 30)
 
-    play_index.assert_awaited_once_with(QUEUE_ID, 0, seek_position=30)
+    play_index.assert_awaited_once_with(QUEUE_ID, 0, seek_position=30, seek_transition=True)
     # the play action's own bookkeeping updates around the seek carry whatever the queue
     # holds at that moment; the seek target itself must go out before the stream restarts
     assert events.index(("signal", 30)) < events.index(("restart", 30))
@@ -153,3 +153,15 @@ async def test_play_index_stops_and_reports_a_source_capacity_failure() -> None:
     assert queue_item.available
     assert ctrl._load_item.await_count == 1
     ctrl.stop.assert_awaited_once_with(QUEUE_ID)
+
+
+async def test_seek_fade_belongs_to_requested_item_and_generation() -> None:
+    """Only the requested seek gets a transition, including a seek to frame zero."""
+    ctrl, _queue, _signals = _controller_with_stale_queue()
+    await ctrl.play_index(QUEUE_ID, 0, seek_position=0, seek_transition=True)
+    state = ctrl._queue_data[QUEUE_ID]
+    generation = state.session_id
+    assert state.seek_transition == (generation, "old")
+    await ctrl.play_index(QUEUE_ID, 1)
+    assert state.session_id != generation
+    assert state.seek_transition is None
