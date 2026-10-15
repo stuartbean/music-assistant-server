@@ -7,12 +7,11 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from math import ceil
-from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from music_assistant_models.enums import ContentType, MediaType, ProviderFeature, StreamType
-from music_assistant_models.errors import AudioError, InvalidDataError, MediaNotFoundError
+from music_assistant_models.errors import AudioError, MediaNotFoundError
 from music_assistant_models.media_items import (
     Artist,
     AudioFormat,
@@ -28,10 +27,9 @@ from music_assistant_models.streamdetails import StreamDetails
 
 from music_assistant.models.music_provider import MusicProvider
 
+from .catalog import TRACK_ID, MidiCatalogItem, load_catalog
 from .constants import CONF_MIDI_FILE, CONF_SOUNDFONT, DEFAULT_SOUNDFONT, MAX_SESSIONS, SAMPLE_RATE
-from .midi_file import MidiFile, load_midi
 from .session import MidiSession, SessionClosedError
-from .synthesizer import FluidSynth
 
 if TYPE_CHECKING:
     from music_assistant_models.config_entries import ProviderConfig
@@ -39,20 +37,18 @@ if TYPE_CHECKING:
 
     from music_assistant.mass import MusicAssistant
 
-TRACK_ID = "performance"
-ARTIST_ID = "midi"
-
 
 @dataclass
 class MidiPlaybackRequest:
     """Server-only association stored on the exact StreamDetails MA gives the producer."""
 
     request_id: str
+    item_id: str
     session: MidiSession | None = None
 
 
 class MidiProvider(MusicProvider):
-    """Expose a configured MIDI file as a track and synthesize it on demand."""
+    """Expose bundled MIDI samples and an optional configured file as playable tracks."""
 
     def __init__(
         self, mass: MusicAssistant, manifest: ProviderManifest, config: ProviderConfig
@@ -65,19 +61,19 @@ class MidiProvider(MusicProvider):
             {ProviderFeature.BROWSE, ProviderFeature.SEARCH, ProviderFeature.LIBRARY_TRACKS},
         )
         self._sessions: dict[str, MidiSession] = {}
-        self._midi: MidiFile
+        self._catalog: dict[str, MidiCatalogItem] = {}
         self._soundfont = ""
 
     @property
     def is_streaming_provider(self) -> bool:
-        """Return False: each instance represents its own configured local file."""
+        """Return False for the local MIDI catalog."""
         return False
 
     async def handle_async_init(self) -> None:
-        """Validate the local MIDI file, SoundFont and native synth installation."""
+        """Load MIDI performances and validate the SoundFont and native synth installation."""
         path = str(self.get_setup_value(CONF_MIDI_FILE) or "")
         self._soundfont = str(self.get_setup_value(CONF_SOUNDFONT) or DEFAULT_SOUNDFONT)
-        self._midi = await asyncio.to_thread(self._load, path, self._soundfont)
+        self._catalog = await asyncio.to_thread(load_catalog, path, self._soundfont)
 
     async def unload(self, is_removed: bool = False) -> None:
         """Close every active/pending render and attached consumer."""
@@ -87,65 +83,69 @@ class MidiProvider(MusicProvider):
 
     async def get_library_tracks(self) -> AsyncGenerator[Track]:
         """Expose the configured performance in the MA library."""
-        yield await self.get_track(TRACK_ID)
+        if TRACK_ID in self._catalog:
+            yield await self.get_track(TRACK_ID)
 
     async def get_track(self, prov_track_id: str) -> Track:
-        """Return the configured MIDI performance."""
-        if prov_track_id != TRACK_ID:
-            raise MediaNotFoundError("Unknown MIDI performance")
+        """Return a bundled sample or the configured MIDI performance."""
+        item = self._get_catalog_item(prov_track_id)
         return Track(
-            item_id=TRACK_ID,
+            item_id=item.item_id,
             provider=self.instance_id,
-            name=self._midi.name,
-            duration=ceil(self._midi.total_frames / SAMPLE_RATE),
-            artists=UniqueList([await self.get_artist(ARTIST_ID)]),
-            provider_mappings={self._mapping(TRACK_ID)},
+            name=item.midi.name,
+            duration=ceil(item.midi.total_frames / SAMPLE_RATE),
+            artists=UniqueList([await self.get_artist(item.artist_id)]),
+            provider_mappings={self._mapping(item.item_id)},
         )
 
     async def get_artist(self, prov_artist_id: str) -> Artist:
-        """Return the generic artist of this MIDI performance."""
-        if prov_artist_id != ARTIST_ID:
-            raise MediaNotFoundError("Unknown MIDI artist")
-        return Artist(
-            item_id=ARTIST_ID,
-            provider=self.instance_id,
-            name="MIDI performance",
-            provider_mappings={self._mapping(ARTIST_ID)},
-        )
+        """Return the composer or generic artist of a catalog performance."""
+        for item in self._catalog.values():
+            if item.artist_id == prov_artist_id:
+                return Artist(
+                    item_id=item.artist_id,
+                    provider=self.instance_id,
+                    name=item.artist_name,
+                    provider_mappings={self._mapping(item.artist_id)},
+                )
+        raise MediaNotFoundError("Unknown MIDI artist")
 
     async def browse(self, path: str) -> Sequence[MediaItemType | ItemMapping | BrowseFolder]:
-        """Browse the configured performance."""
-        return [await self.get_track(TRACK_ID)]
+        """Browse every bundled sample and the optional custom performance."""
+        return [await self.get_track(item_id) for item_id in self._catalog]
 
     async def search(
         self, search_query: str, media_types: list[MediaType], limit: int = 5
     ) -> SearchResults:
-        """Search the configured performance by title."""
+        """Search bundled and custom MIDI performances by title or composer."""
         results = SearchResults()
-        if (
-            MediaType.TRACK in media_types
-            and limit > 0
-            and search_query.casefold() in self._midi.name.casefold()
-        ):
-            results.tracks = [await self.get_track(TRACK_ID)]
+        if MediaType.TRACK in media_types and limit > 0:
+            query = search_query.casefold()
+            matches = [
+                item.item_id
+                for item in self._catalog.values()
+                if query in item.midi.name.casefold() or query in item.artist_name.casefold()
+            ]
+            results.tracks = [await self.get_track(item_id) for item_id in matches[:limit]]
         return results
 
     async def get_stream_details(
         self, item_id: str, media_type: MediaType = MediaType.TRACK
     ) -> StreamDetails:
         """Describe raw stereo PCM and reserve a unique association without creating a synth."""
-        if media_type != MediaType.TRACK or item_id != TRACK_ID:
+        if media_type != MediaType.TRACK:
             raise MediaNotFoundError("Unknown MIDI performance")
+        item = self._get_catalog_item(item_id)
         return StreamDetails(
             provider=self.instance_id,
-            item_id=TRACK_ID,
+            item_id=item.item_id,
             media_type=MediaType.TRACK,
             audio_format=self._audio_format(),
             stream_type=StreamType.CUSTOM,
-            duration=ceil(self._midi.total_frames / SAMPLE_RATE),
+            duration=ceil(item.midi.total_frames / SAMPLE_RATE),
             allow_seek=True,
             can_seek=True,
-            data=MidiPlaybackRequest(uuid4().hex),
+            data=MidiPlaybackRequest(uuid4().hex, item_id),
         )
 
     def get_playback_session(self, streamdetails: StreamDetails) -> MidiSession:
@@ -162,7 +162,7 @@ class MidiProvider(MusicProvider):
         if self.unloading or streamdetails.provider != self.instance_id:
             raise SessionClosedError("The MIDI provider is unavailable for this playback")
         request = streamdetails.data
-        if not isinstance(request, MidiPlaybackRequest):
+        if not isinstance(request, MidiPlaybackRequest) or request.item_id != streamdetails.item_id:
             raise SessionClosedError("Stream details do not belong to a MIDI playback")
         if request.session is not None:
             return request.session
@@ -171,7 +171,7 @@ class MidiProvider(MusicProvider):
         first_frame = round(streamdetails.seek_position * SAMPLE_RATE)
         session = MidiSession(
             request.request_id,
-            self._midi,
+            self._get_catalog_item(request.item_id).midi,
             self._soundfont,
             first_frame,
             on_idle=lambda: self._discard_session(request.request_id),
@@ -205,17 +205,18 @@ class MidiProvider(MusicProvider):
         self, streamdetails: StreamDetails, seek_position: int = 0
     ) -> AsyncGenerator[bytes]:
         """Yield normal MA stereo while the same frames feed any attached multichannel reader."""
-        if seek_position < 0 or seek_position > ceil(self._midi.total_frames / SAMPLE_RATE):
+        midi = self._get_catalog_item(streamdetails.item_id).midi
+        if seek_position < 0 or seek_position > ceil(midi.total_frames / SAMPLE_RATE):
             raise AudioError("MIDI seek position is outside the performance")
         request = streamdetails.data
-        if not isinstance(request, MidiPlaybackRequest):
+        if not isinstance(request, MidiPlaybackRequest) or request.item_id != streamdetails.item_id:
             raise AudioError("Missing MIDI playback association")
         if request.session and request.session.state in ("eof", "closed", "failed"):
             # MA can reopen details after pause/seek. Every render has a new ID,
             # while existing consumers keep their original terminal session.
-            streamdetails.data = MidiPlaybackRequest(uuid4().hex)
+            streamdetails.data = MidiPlaybackRequest(uuid4().hex, streamdetails.item_id)
         session = self.get_playback_session(streamdetails)
-        session.set_source_origin(min(seek_position * SAMPLE_RATE, self._midi.total_frames))
+        session.set_source_origin(min(seek_position * SAMPLE_RATE, midi.total_frames))
         async with aclosing(session.stereo_stream()) as source:
             async for chunk in source:
                 yield chunk
@@ -236,14 +237,7 @@ class MidiProvider(MusicProvider):
             content_type=ContentType.PCM_F32LE, sample_rate=SAMPLE_RATE, bit_depth=32, channels=2
         )
 
-    def _load(self, path: str, soundfont: str) -> MidiFile:
-        midi_path = Path(path)
-        font_path = Path(soundfont)
-        if not midi_path.is_file() or midi_path.stat().st_size > 16 * 1024 * 1024:
-            raise InvalidDataError("Configure a readable MIDI file no larger than 16 MiB")
-        if not font_path.is_file() or font_path.suffix.casefold() != ".sf2":
-            raise InvalidDataError("Configure a readable General MIDI .sf2 SoundFont")
-        midi = load_midi(path)
-        synth = FluidSynth(soundfont)
-        synth.close()
-        return midi
+    def _get_catalog_item(self, item_id: str) -> MidiCatalogItem:
+        if item := self._catalog.get(item_id):
+            return item
+        raise MediaNotFoundError("Unknown MIDI performance")

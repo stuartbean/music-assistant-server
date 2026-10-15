@@ -1,15 +1,18 @@
 # MidiProvider
 
-MidiProvider exposes one server-local Standard MIDI File as a playable MA track.
-Add another instance for another file. Browse the source or search for its title;
-the performance also participates in normal library track sync.
+MidiProvider exposes bundled Standard MIDI File samples and an optional custom
+file as playable MA tracks. The included **The Planets, Op. 32 — Gustav Holst**
+is always available in Browse and Search, including searches by composer.
+Only the configured custom performance participates in automatic library track
+sync; samples remain available in the browser without filling the library.
 
 ## Setup
 
 The MA container includes **FluidSynth** and the **TimGM6mb General MIDI
-SoundFont**. Add **MidiProvider** in MA's music sources and enter the absolute
-path to a `.mid` file, for example `/media/midi/performance.mid`. If MA runs in a
-container, the file must be mounted and readable inside that container.
+SoundFont**. Add **MidiProvider** in MA's music sources to play the bundled sample
+without configuring a file. Optionally enter an absolute **Custom MIDI file**
+path, for example `/media/midi/performance.mid`. If MA runs in a container, a
+custom file must be mounted and readable inside that container.
 
 The advanced **Custom General MIDI SoundFont** field is optional. Leave it empty
 to use the included instruments, or supply an absolute path to your own
@@ -52,8 +55,12 @@ arbitrary server-local files. No existing config keys or database schemas change
 FluidSynth is LGPL-licensed; Mido is MIT-licensed. The image includes TimGM6mb
 through its distribution package, including its GPL-2 license and attribution
 at `/usr/share/doc/timgm6mb-soundfont/copyright`; the GPL text is at
-`/usr/share/common-licenses/GPL-2`. No MIDI music is bundled. Check the license of
-any custom SoundFont or MIDI arrangement separately before redistributing it.
+`/usr/share/common-licenses/GPL-2`. Bundled scores live in `samples/`; their
+provenance is documented in [samples/README.md](samples/README.md). Check the
+license of any SoundFont or MIDI arrangement separately before redistributing it.
+The custom performance retains its existing `performance` track ID; bundled
+scores use stable `sample_<filename stem>` IDs. New `.mid` files added to the
+packaged samples folder appear after provider reload.
 
 ## Supported MIDI subset
 

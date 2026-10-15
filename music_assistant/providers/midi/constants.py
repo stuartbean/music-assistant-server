@@ -18,6 +18,6 @@ CONF_MIDI_FILE = "midi_file"
 CONF_SOUNDFONT = "soundfont"
 DEFAULT_SOUNDFONT = "/usr/share/sounds/sf2/TimGM6mb.sf2"
 CONFIG_ENTRIES = (
-    ConfigEntry(key=CONF_MIDI_FILE, type=ConfigEntryType.STRING, required=True),
+    ConfigEntry(key=CONF_MIDI_FILE, type=ConfigEntryType.STRING, required=False),
     ConfigEntry(key=CONF_SOUNDFONT, type=ConfigEntryType.STRING, required=False, advanced=True),
 )

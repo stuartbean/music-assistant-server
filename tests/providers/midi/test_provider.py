@@ -13,6 +13,7 @@ from music_assistant_models.enums import MediaType, ProviderType
 from music_assistant_models.errors import AudioError
 from music_assistant_models.provider import ProviderManifest
 
+from music_assistant.providers.midi.catalog import TRACK_ID, MidiCatalogItem
 from music_assistant.providers.midi.constants import MAX_SESSIONS
 from music_assistant.providers.midi.midi_file import load_midi
 from music_assistant.providers.midi.provider import MidiProvider
@@ -40,7 +41,7 @@ def make_provider(midi_path: Path, soundfont: str = "unused.sf2") -> MidiProvide
     mass.config.get.return_value = config.setup_data
     mass.config.decrypt_string.side_effect = lambda value: value
     provider = MidiProvider(mass, manifest, config)
-    provider._midi = load_midi(str(midi_path))
+    provider._catalog = {TRACK_ID: MidiCatalogItem(TRACK_ID, load_midi(str(midi_path)))}
     provider._soundfont = soundfont
     return provider
 

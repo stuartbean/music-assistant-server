@@ -1,12 +1,12 @@
 {
   "manifest": {
     "name": "MidiProvider",
-    "description": "Synthesize a local General MIDI file for stereo and instrument-family playback."
+    "description": "Play built-in MIDI samples or your own files with stereo and instrument-family audio."
   },
   "config_entries": {
     "midi_file": {
-      "label": "MIDI file",
-      "description": "Absolute path to a Type 0 or Type 1 MIDI file on the server."
+      "label": "Custom MIDI file",
+      "description": "Optional absolute path to a Type 0 or Type 1 MIDI file on the server. Built-in samples are always available in Browse."
     },
     "soundfont": {
       "label": "Custom General MIDI SoundFont",
@@ -14,6 +14,6 @@
     }
   },
   "setup_flow": {
-    "user": {"title": "Choose a MIDI file"}
+    "user": {"title": "Set up MIDI playback"}
   }
 }

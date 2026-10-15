@@ -86,7 +86,7 @@ async def test_real_provider_stereo_matches_internal_frames(
         peak = max(peak, float(np.max(np.abs(mix))))
         frame += frames
     assert peak > 0.001
-    assert frame == provider._midi.total_frames
+    assert frame == provider._catalog["performance"].midi.total_frames
     assert session.state == "eof"
     assert session._renderer is None
     assert await consumer.read() is None

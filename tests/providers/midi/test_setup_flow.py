@@ -1,4 +1,4 @@
-"""User setup needs only a MIDI file when using the included instrument bank."""
+"""User setup can use the included samples and instrument bank."""
 
 from pathlib import Path
 from typing import cast
@@ -12,7 +12,7 @@ from music_assistant.providers.midi.setup_flow import run_setup
 from tests.providers.midi.test_provider import make_provider
 
 
-async def test_setup_only_requires_midi_file(midi_path: Path) -> None:
+async def test_setup_accepts_optional_custom_file(midi_path: Path) -> None:
     """The Add provider form can complete without selecting a SoundFont."""
     session = MagicMock()
     session.context.setup_data = {}
@@ -20,7 +20,7 @@ async def test_setup_only_requires_midi_file(midi_path: Path) -> None:
     session.finish = AsyncMock()
     await run_setup(cast("SetupSession", session))
     entries = {entry.key: entry for entry in session.form.call_args.args[0]}
-    assert entries[CONF_MIDI_FILE].required
+    assert entries[CONF_MIDI_FILE].required is False
     assert entries[CONF_SOUNDFONT].required is False
     assert entries[CONF_SOUNDFONT].advanced
     session.finish.assert_awaited_once_with({CONF_MIDI_FILE: str(midi_path)})
@@ -59,3 +59,13 @@ async def test_existing_custom_soundfont_is_preserved(
     await provider.handle_async_init()
     assert provider._soundfont == soundfont
     await provider.unload()
+
+
+async def test_setup_accepts_bundled_defaults() -> None:
+    """Adding the provider can finish with no custom file or SoundFont paths."""
+    session = MagicMock()
+    session.context.setup_data = {}
+    session.form = AsyncMock(return_value={})
+    session.finish = AsyncMock()
+    await run_setup(cast("SetupSession", session))
+    session.finish.assert_awaited_once_with({})
