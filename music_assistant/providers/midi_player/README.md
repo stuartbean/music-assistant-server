@@ -13,6 +13,20 @@ first. All selected receivers must be available and belong to the same AirPlay
 provider instance. AirPlay protocol endpoints linked to other MA players are
 listed using their parent player's display name.
 
+## Volume
+
+MIDI Ensemble uses MA's standard group volume and mute controls. The group slider
+adjusts the assigned speakers through their configured volume controls, using
+MA's existing balance interpolation. Adjust an individual speaker to change its
+balance within the ensemble. The displayed group level is the highest volume of
+its available, powered-on members that support volume control.
+
+Configured receivers remain listed while idle, so group volume can be set before
+playback. During playback and pause, membership follows the live AirPlay session.
+Receivers are held by the ensemble only while that session exists and are released
+on stop or failed startup. Linked AirPlay endpoints appear as their visible parent
+players, whose configured controls handle volume and mute.
+
 ## Audio and timing
 
 - Standard provider stereo consumption drives one MidiProvider render. Before
@@ -65,7 +79,7 @@ reliably by the server.
   Late joining is rejected for receiver-specific sessions because the existing
   AirPlay late-join ring holds the reference mix, not each receiver's family mix.
 - MIDI tracks only. No independent family queues, left/right reassignment,
-  per-family gain, ensemble master volume or mixing of arbitrary music sources.
+  per-family gain, independent software master gain or mixing of arbitrary music sources.
 - Normal playback speed only. Crossfades, queue normalization and other master
   queue processing are bypassed, rather than applied only to the discarded
   reference. Receiver output processing still uses AirPlay's normal output plan;

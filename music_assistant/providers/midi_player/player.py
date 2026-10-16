@@ -38,12 +38,43 @@ class MidiPlayer(Player):
 
     def __init__(self, provider: MidiPlayerProvider, player_id: str) -> None:
         """Initialize the virtual player without claiming configured receivers."""
-        super().__init__(provider, player_id)
-        self._attr_supported_features = {PlayerFeature.PLAY_MEDIA, PlayerFeature.PAUSE}
         self._session: AirPlayStreamSession | None = None
+        super().__init__(provider, player_id)
         self._playback: MidiPlayback | None = None
         self._lock = asyncio.Lock()
         self._parents: dict[str, tuple[str, str | None]] = {}
+
+    @property
+    def supported_features(self) -> set[PlayerFeature]:
+        """Expose playback controls and the volume controls supported by visible members."""
+        features = {PlayerFeature.PLAY_MEDIA, PlayerFeature.PAUSE}
+        for member in self._translate_protocol_ids_to_visible(set(self.group_members)):
+            if member.state.available:
+                features.update(
+                    {PlayerFeature.VOLUME_SET, PlayerFeature.VOLUME_MUTE}
+                    & member.state.supported_features
+                )
+        return features
+
+    @property
+    def group_members(self) -> list[str]:
+        """Return live receivers during a session and configured receivers while idle."""
+        if self._session is not None:
+            return self.live_session_members
+        return list(
+            dict.fromkeys(
+                str(value)
+                for family in FAMILIES
+                if (value := self.provider.get_setup_value(family.value))
+            )
+        )
+
+    @property
+    def live_session_members(self) -> list[str]:
+        """Return receivers held by the playing or parked AirPlay session."""
+        if self._session is None:
+            return []
+        return [player.player_id for player in self._session.sync_clients]
 
     @property
     def uses_audio_buffer(self) -> bool:
@@ -238,7 +269,6 @@ class MidiPlayer(Player):
         return item, provider
 
     def _claim_outputs(self, clients: list[AirPlayPlayer]) -> None:
-        self._attr_group_members = [player.player_id for player in clients]
         for player in clients:
             if player.protocol_parent_id and (
                 parent := self.mass.players.get_player(player.protocol_parent_id)
@@ -268,7 +298,6 @@ class MidiPlayer(Player):
         finally:
             if playback:
                 await playback.close()
-            self._attr_group_members = []
             for parent_id, (protocol_id, previous) in self._parents.items():
                 endpoint = self.mass.players.get_player(protocol_id)
                 if (

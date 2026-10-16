@@ -169,7 +169,8 @@ async def test_one_receiver_can_take_several_families(
     finally:
         await player.stop()
     assert not midi._sessions
-    assert player.group_members == []
+    assert player.group_members == ["speaker"]
+    assert player.live_session_members == []
     assert not player.is_active_session
 
 
@@ -278,7 +279,8 @@ async def test_failed_cold_start_releases_every_resource(
         await start_item(player, midi, state)
     assert not midi._sessions
     assert player._session is None
-    assert player.group_members == []
+    assert player.group_members == ["speaker"]
+    assert player.live_session_members == []
     assert client.stream is None
     assert player.playback_state == PlaybackState.IDLE
 
