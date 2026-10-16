@@ -4,21 +4,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
-from itertools import groupby
+from heapq import merge
+from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import mido
 from music_assistant_models.errors import InvalidDataError
 
-from .constants import RELEASE_SECONDS, SAMPLE_RATE
+from .constants import (
+    MAX_MIDI_EVENTS,
+    MAX_MIDI_FILE_BYTES,
+    MAX_MIDI_METADATA_BYTES,
+    RELEASE_SECONDS,
+    SAMPLE_RATE,
+)
 from .routing import MidiRoute, build_routes
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class MidiEvent:
     """A MIDI channel message scheduled at an absolute file sample frame."""
 
@@ -48,10 +55,22 @@ def load_midi(path: str) -> MidiFile:
     :param path: Local Standard MIDI File to read.
     """
     try:
-        midi = mido.MidiFile(path, clip=False)
+        data = _read_midi_bytes(Path(path))
+        _check_parse_limits(data)
+        midi = mido.MidiFile(file=BytesIO(data), clip=False)
         return _timeline(midi, Path(path).stem)
     except (OSError, ValueError, EOFError, KeyError, IndexError) as err:
         raise InvalidDataError(f"Cannot play MIDI file: {err}") from err
+
+
+def _read_midi_bytes(path: Path) -> bytes:
+    if not path.is_file():
+        raise ValueError("Configure a readable MIDI file")
+    with path.open("rb") as source:
+        data = source.read(MAX_MIDI_FILE_BYTES + 1)
+    if len(data) > MAX_MIDI_FILE_BYTES:
+        raise ValueError("Configure a readable MIDI file no larger than 16 MiB")
+    return data
 
 
 def _timeline(midi: mido.MidiFile, fallback_name: str) -> MidiFile:
@@ -131,26 +150,92 @@ def _timeline(midi: mido.MidiFile, fallback_name: str) -> MidiFile:
 
 def _port_events(midi: mido.MidiFile) -> Iterator[tuple[int, int, mido.Message | mido.MetaMessage]]:
     """Merge tracks while keeping port prefixes local to each track and event position."""
-    merged: list[tuple[int, int, int, int, mido.Message | mido.MetaMessage]] = []
-    for track_index, track in enumerate(midi.tracks):
-        tick = 0
-        absolute = []
-        for message in track:
-            tick += int(message.time)
-            absolute.append((tick, message))
-        port = 0
-        for tick, group in groupby(absolute, key=lambda item: item[0]):
-            messages = [item[1] for item in group]
-            # Exporters can place setup messages before their port prefix at the
-            # same tick. A single declaration applies to that whole zero-duration
-            # group. Conflicting declarations cannot be unambiguously repaired.
-            ports = {int(message.port) for message in messages if message.type == "midi_port"}
-            if len(ports) > 1:
-                raise ValueError("Conflicting MIDI port declarations at the same track tick")
-            if ports:
-                port = ports.pop()
-            for index, message in enumerate(messages):
-                merged.append((tick, track_index, index, port, message))
-    merged.sort(key=lambda item: item[:3])
-    for tick, _track, _index, port, message in merged:
-        yield tick, port, message
+    yield from merge(*(_track_events(track) for track in midi.tracks), key=lambda event: event[0])
+
+
+def _track_events(
+    track: mido.MidiTrack,
+) -> Iterator[tuple[int, int, mido.Message | mido.MetaMessage]]:
+    tick = port = index = 0
+    while index < len(track):
+        tick += int(track[index].time)
+        end = index + 1
+        while end < len(track) and track[end].time == 0:
+            end += 1
+        # Exporters can place setup messages before their port prefix at the
+        # same tick. A single declaration applies to that whole zero-duration
+        # group. Conflicting declarations cannot be unambiguously repaired.
+        # Scan the interval in place to avoid copying same-tick messages.
+        ports = {
+            int(track[position].port)
+            for position in range(index, end)
+            if track[position].type == "midi_port"
+        }
+        if len(ports) > 1:
+            raise ValueError("Conflicting MIDI port declarations at the same track tick")
+        if ports:
+            port = ports.pop()
+        while index < end:
+            yield tick, port, track[index]
+            index += 1
+
+
+def _check_parse_limits(data: bytes) -> None:
+    """Reject excessive event counts and payloads before Mido allocates decoded messages."""
+    if len(data) < 14 or data[:4] != b"MThd":
+        raise ValueError("Invalid MIDI file header")
+    header_size = int.from_bytes(data[4:8])
+    if header_size < 6 or 8 + header_size > len(data):
+        raise ValueError("Invalid MIDI header size")
+    offset = 8 + header_size
+    events = payload_bytes = 0
+    for _ in range(int.from_bytes(data[10:12])):
+        if data[offset : offset + 4] != b"MTrk" or offset + 8 > len(data):
+            raise ValueError("Invalid MIDI track header")
+        end = offset + 8 + int.from_bytes(data[offset + 4 : offset + 8])
+        if end > len(data):
+            raise ValueError("Truncated MIDI track")
+        position = offset + 8
+        running_status = 0
+        while position < end:
+            _delta, position = _variable_int(data, position, end)
+            events += 1
+            if events > MAX_MIDI_EVENTS:
+                raise ValueError(f"MIDI file exceeds the {MAX_MIDI_EVENTS:,}-event limit")
+            if position >= end:
+                raise ValueError("Truncated MIDI event")
+            status = data[position]
+            if status < 0x80:
+                status = running_status
+            else:
+                position += 1
+                if status != 0xFF:
+                    running_status = status
+            if status in (0xF0, 0xF7, 0xFF):
+                if status == 0xFF:
+                    position += 1
+                size, position = _variable_int(data, position, end)
+                payload_bytes += size
+                if payload_bytes > MAX_MIDI_METADATA_BYTES:
+                    raise ValueError("MIDI metadata and SysEx exceed the 1 MiB payload limit")
+            elif 0x80 <= status <= 0xEF:
+                size = 1 if status >> 4 in (0xC, 0xD) else 2
+            else:
+                raise ValueError("Invalid or unsupported MIDI status")
+            position += size
+            if position > end:
+                raise ValueError("Truncated MIDI event")
+        offset = end
+
+
+def _variable_int(data: bytes, position: int, end: int) -> tuple[int, int]:
+    value = 0
+    for _ in range(4):
+        if position >= end:
+            raise ValueError("Truncated MIDI variable-length value")
+        byte = data[position]
+        position += 1
+        value = (value << 7) | (byte & 0x7F)
+        if byte < 0x80:
+            return value, position
+    raise ValueError("MIDI variable-length values must fit in four bytes")

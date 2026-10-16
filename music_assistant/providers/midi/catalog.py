@@ -45,10 +45,10 @@ def load_catalog(custom_path: str, soundfont: str) -> dict[str, MidiCatalogItem]
         raise InvalidDataError("Configure a readable General MIDI .sf2 SoundFont")
     catalog: dict[str, MidiCatalogItem] = {}
     if custom_path:
-        catalog[TRACK_ID] = MidiCatalogItem(TRACK_ID, _load_file(Path(custom_path)))
+        catalog[TRACK_ID] = MidiCatalogItem(TRACK_ID, load_midi(custom_path))
     for path in sorted(SAMPLES_DIR.glob("*.mid")):
         item_id = f"sample_{path.stem}"
-        midi = _load_file(path)
+        midi = load_midi(str(path))
         if metadata := SAMPLE_METADATA.get(path.stem):
             title, artist_id, artist_name = metadata
             catalog[item_id] = MidiCatalogItem(
@@ -63,9 +63,3 @@ def load_catalog(custom_path: str, soundfont: str) -> dict[str, MidiCatalogItem]
     synth = FluidSynth(soundfont)
     synth.close()
     return catalog
-
-
-def _load_file(path: Path) -> MidiFile:
-    if not path.is_file() or path.stat().st_size > 16 * 1024 * 1024:
-        raise InvalidDataError("Configure a readable MIDI file no larger than 16 MiB")
-    return load_midi(str(path))

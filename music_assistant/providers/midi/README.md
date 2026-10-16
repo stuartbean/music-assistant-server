@@ -83,7 +83,9 @@ packaged samples folder appear after provider reload.
 - GM1 System On SysEx is accepted. Other SysEx (including GS/XG/GM2 extensions),
   SMPTE division/offset, Type 2, sequencer-specific metadata,
   and omni/mono/poly channel-mode changes are rejected explicitly. Unsupported
-  files fail validation before playback. Files larger than 16 MiB are rejected.
+  files fail validation before playback. Files larger than 16 MiB, files with more
+  than 500,000 events (including metadata), and files with more than 1 MiB of
+  combined metadata/SysEx payload are rejected before messages are decoded.
 
 Each event is scheduled at its absolute rounded sample frame using exact rational
 accumulation of MIDI ticks and tempo. Native voice changes have FluidSynth's
